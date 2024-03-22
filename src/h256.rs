@@ -1,7 +1,11 @@
 use core::cmp::Ordering;
 
+#[cfg(feature = "borsh")]
+use borsh::{BorshDeserialize, BorshSerialize};
+
 /// Represent 256 bits
 #[derive(Eq, PartialEq, Debug, Default, Hash, Clone, Copy)]
+#[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
 pub struct H256([u8; 32]);
 
 const ZERO: H256 = H256([0u8; 32]);
@@ -28,7 +32,7 @@ impl H256 {
     pub fn set_bit(&mut self, i: u8) {
         let byte_pos = i / BYTE_SIZE;
         let bit_pos = i % BYTE_SIZE;
-        self.0[byte_pos as usize] |= 1 << bit_pos as u8;
+        self.0[byte_pos as usize] |= 1 << bit_pos;
     }
 
     #[inline]

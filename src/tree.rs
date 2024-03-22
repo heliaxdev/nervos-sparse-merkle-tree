@@ -1,3 +1,6 @@
+#[cfg(feature = "borsh")]
+use borsh::{BorshDeserialize, BorshSerialize};
+
 use crate::{
     collections::VecDeque,
     error::{Error, Result},
@@ -11,6 +14,7 @@ use core::cmp::Ordering;
 use core::marker::PhantomData;
 /// The branch key
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
 pub struct BranchKey {
     pub height: u8,
     pub node_key: H256,
@@ -38,6 +42,7 @@ impl Ord for BranchKey {
 
 /// A branch in the SMT
 #[derive(Debug, Eq, PartialEq, Clone)]
+#[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
 pub struct BranchNode {
     pub left: MergeValue,
     pub right: MergeValue,

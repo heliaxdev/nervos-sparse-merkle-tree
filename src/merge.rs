@@ -1,3 +1,6 @@
+#[cfg(feature = "borsh")]
+use borsh::{BorshDeserialize, BorshSerialize};
+
 use crate::h256::H256;
 use crate::traits::Hasher;
 
@@ -5,6 +8,7 @@ const MERGE_NORMAL: u8 = 1;
 const MERGE_ZEROS: u8 = 2;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
+#[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
 pub enum MergeValue {
     Value(H256),
     MergeWithZero {

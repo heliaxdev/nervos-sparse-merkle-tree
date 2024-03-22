@@ -1,3 +1,6 @@
+#[cfg(feature = "borsh")]
+use borsh::{BorshDeserialize, BorshSerialize};
+
 use crate::{
     collections,
     error::Error,
@@ -7,6 +10,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
 pub struct DefaultStore<V> {
     branches_map: Map<BranchKey, BranchNode>,
     leaves_map: Map<H256, V>,
