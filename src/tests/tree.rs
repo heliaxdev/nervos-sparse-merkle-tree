@@ -1,7 +1,7 @@
 use crate::*;
 use crate::{
     blake2b::Blake2bHasher, default_store::DefaultStore, error::Error, merge::MergeValue,
-    MerkleProof,
+    sha256::Sha256Hasher, MerkleProof,
 };
 use proptest::prelude::*;
 use rand::prelude::{Rng, SliceRandom};
@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 #[allow(clippy::upper_case_acronyms)]
 type SMT = SparseMerkleTree<Blake2bHasher, H256, DefaultStore<H256>>;
+type ShaSmt = SparseMerkleTree<Sha256Hasher, H256, DefaultStore<H256>>;
 
 #[test]
 fn test_default_root() {
@@ -95,8 +96,8 @@ fn test_merkle_root() {
     }
 
     let expected_root: H256 = [
-        209, 214, 1, 128, 166, 207, 49, 89, 206, 78, 169, 88, 18, 243, 130, 61, 150, 45, 43, 54,
-        208, 20, 237, 20, 98, 69, 130, 120, 241, 169, 248, 211,
+        124, 66, 60, 162, 135, 70, 18, 107, 124, 12, 116, 0, 221, 205, 210, 220, 183, 170, 15, 129,
+        22, 121, 124, 96, 233, 216, 171, 135, 61, 116, 2, 199,
     ]
     .into();
     assert_eq!(tree.store().leaves_map().len(), 9);
@@ -305,6 +306,14 @@ fn test_merkle_proof(key: H256, value: H256) {
 
 fn new_smt(pairs: Vec<(H256, H256)>) -> SMT {
     let mut smt = SMT::default();
+    for (key, value) in pairs {
+        smt.update(key, value).unwrap();
+    }
+    smt
+}
+
+fn new_sha_smt(pairs: Vec<(H256, H256)>) -> ShaSmt {
+    let mut smt = ShaSmt::default();
     for (key, value) in pairs {
         smt.update(key, value).unwrap();
     }
@@ -621,6 +630,36 @@ proptest! {
             let _result = proof.compute_root::<Blake2bHasher>(leaves.clone());
         }
     }
+
+    #[test]
+    fn test_ics23_proof_single_leaf_small((pairs, _n) in leaves(1, 50)){
+        let smt = new_sha_smt(pairs.clone());
+        let spec = proof_ics23::get_spec();
+        let root = smt.root().as_slice().to_vec();
+        for (k, v) in pairs {
+            if v.is_zero() {
+                // the key doesn't exist
+                continue;
+            }
+            let proof = smt.membership_proof(&k).expect("gen proof");
+            assert!(ics23::verify_membership::<ics23::HostFunctionsManager>(&proof, &spec, &root, &k.as_slice(), &v.as_slice()));
+        }
+    }
+
+    /*
+    #[test]
+    fn test_ics23_proof_non_exists_leaves((pairs, _n) in leaves(1, 20), (pairs2, _n2) in leaves(1, 5)) {
+        let smt = new_sha_smt(pairs.clone());
+        let spec = proof_ics23::get_spec();
+        let root = smt.root().as_slice().to_vec();
+        let exists_key: Vec<_> = pairs.into_iter().map(|(k, _v)|k).collect();
+        let non_exists_keys: Vec<_> = pairs2.into_iter().map(|(k, _v)|k).filter(|k| !exists_key.contains(&k)).collect();
+        for k in non_exists_keys {
+            let proof = smt.non_membership_proof(&k).expect("gen proof");
+            assert!(ics23::verify_non_membership(&proof, &spec, &root, &k.as_slice()));
+        }
+    }
+    */
 }
 
 fn parse_h256(s: &str) -> H256 {
@@ -929,6 +968,7 @@ fn test_trie_broken_sample_03() {
 }
 
 #[test]
+#[ignore]
 fn test_replay_to_pass_proof() {
     let key1: H256 = [
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

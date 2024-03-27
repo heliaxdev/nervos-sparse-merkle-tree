@@ -69,6 +69,8 @@ pub mod error;
 pub mod h256;
 pub mod merge;
 pub mod merkle_proof;
+pub mod proof_ics23;
+pub mod sha256;
 #[cfg(test)]
 mod tests;
 pub mod traits;

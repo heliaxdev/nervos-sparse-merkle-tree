@@ -1,6 +1,6 @@
 use crate::{
     error::{Error, Result},
-    merge::{merge, MergeValue},
+    merge::{hash_leaf, merge, MergeValue},
     traits::Hasher,
     vec::Vec,
     H256, MAX_STACK_SIZE,
@@ -234,7 +234,8 @@ impl CompiledMerkleProof {
                     }
                     let (k, v) = leaves[leaf_index];
                     callback(OpCodeContext::L { key: &k })?;
-                    stack.push((0, k, MergeValue::from_h256(v)));
+                    let value = hash_leaf::<H>(&k, &v);
+                    stack.push((0, k, value));
                     leaf_index += 1;
                 }
                 // P : hash stack top item with sibling node in proof

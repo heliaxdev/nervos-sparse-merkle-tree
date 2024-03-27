@@ -4,9 +4,6 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use crate::h256::H256;
 use crate::traits::Hasher;
 
-const MERGE_NORMAL: u8 = 1;
-const MERGE_ZEROS: u8 = 2;
-
 #[derive(Debug, Eq, PartialEq, Clone)]
 #[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
 pub enum MergeValue {
@@ -36,7 +33,7 @@ impl MergeValue {
     pub fn is_zero(&self) -> bool {
         match self {
             MergeValue::Value(v) => v.is_zero(),
-            MergeValue::MergeWithZero { .. } => false,
+            MergeValue::MergeWithZero { base_node, .. } => base_node.is_zero(),
             #[cfg(feature = "trie")]
             MergeValue::ShortCut { .. } => false,
         }
@@ -61,16 +58,9 @@ impl MergeValue {
             MergeValue::Value(v) => *v,
             MergeValue::MergeWithZero {
                 base_node,
-                zero_bits,
-                zero_count,
-            } => {
-                let mut hasher = H::default();
-                hasher.write_byte(MERGE_ZEROS);
-                hasher.write_h256(base_node);
-                hasher.write_h256(zero_bits);
-                hasher.write_byte(*zero_count);
-                hasher.finish()
-            }
+                zero_bits: _,
+                zero_count: _,
+            } => *base_node,
             #[cfg(feature = "trie")]
             MergeValue::ShortCut { key, value, height } => {
                 into_merge_value::<H>(*key, *value, *height).hash::<H>()
@@ -135,17 +125,27 @@ pub fn merge<H: Hasher + Default>(
         return merge_with_zero::<H>(height, node_key, lhs, false);
     }
     let mut hasher = H::default();
-    hasher.write_byte(MERGE_NORMAL);
-    hasher.write_byte(height);
-    hasher.write_h256(node_key);
     hasher.write_h256(&lhs.hash::<H>());
     hasher.write_h256(&rhs.hash::<H>());
     MergeValue::Value(hasher.finish())
 }
 
+/// hash_leaf = hash(prefix | key | value)
+/// zero value represent delete the key, this function return zero for zero value
+pub fn hash_leaf<H: Hasher + Default>(key: &H256, value: &H256) -> MergeValue {
+    if value.is_zero() {
+        return MergeValue::Value(H256::zero());
+    }
+    let mut hasher = H::default();
+    hasher.write_h256(&H256::zero());
+    hasher.write_h256(key);
+    hasher.write_h256(value);
+    MergeValue::Value(hasher.finish())
+}
+
 pub fn merge_with_zero<H: Hasher + Default>(
     height: u8,
-    node_key: &H256,
+    _node_key: &H256,
     value: &MergeValue,
     set_bit: bool,
 ) -> MergeValue {
@@ -155,7 +155,8 @@ pub fn merge_with_zero<H: Hasher + Default>(
             if set_bit {
                 zero_bits.set_bit(height);
             }
-            let base_node = hash_base_node::<H>(height, node_key, v);
+            //let base_node = hash_base_node::<H>(height, node_key, v);
+            let base_node = *v;
             MergeValue::MergeWithZero {
                 base_node,
                 zero_bits,

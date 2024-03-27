@@ -1,11 +1,15 @@
 #[cfg(feature = "borsh")]
 use borsh::{BorshDeserialize, BorshSerialize};
+use ics23::commitment_proof::Proof;
+use ics23::{CommitmentProof, NonExistenceProof};
 
+use crate::merge::hash_leaf;
 use crate::{
     collections::VecDeque,
     error::{Error, Result},
     merge::{merge, MergeValue},
     merkle_proof::MerkleProof,
+    proof_ics23,
     traits::{Hasher, StoreReadOps, StoreWriteOps, Value},
     vec::Vec,
     H256, MAX_STACK_SIZE,
@@ -131,7 +135,7 @@ impl<H: Hasher + Default, V: Value, S: StoreReadOps<V> + StoreWriteOps<V>>
     /// set to zero value to delete a key
     pub fn update(&mut self, key: H256, value: V) -> Result<&H256> {
         // compute and store new leaf
-        let node = MergeValue::from_h256(value.to_h256());
+        let node = hash_leaf::<H>(&key, &value.to_h256());
         // notice when value is zero the leaf is deleted, so we do not need to store it
         if !node.is_zero() {
             self.store.insert_leaf(key, value)?;
@@ -190,7 +194,7 @@ impl<H: Hasher + Default, V: Value, S: StoreReadOps<V> + StoreWriteOps<V>>
         let mut nodes = leaves
             .into_iter()
             .map(|(k, v)| {
-                let value = MergeValue::from_h256(v.to_h256());
+                let value = hash_leaf::<H>(&k, &v.to_h256());
                 if !value.is_zero() {
                     self.store.insert_leaf(k, v)
                 } else {
@@ -262,7 +266,9 @@ impl<H: Hasher + Default, V: Value, S: StoreReadOps<V> + StoreWriteOps<V>>
     }
 }
 
-impl<H: Hasher + Default, V: Value, S: StoreReadOps<V>> SparseMerkleTree<H, V, S> {
+impl<H: Hasher + Default, V: Value + core::cmp::PartialEq, S: StoreReadOps<V>>
+    SparseMerkleTree<H, V, S>
+{
     /// Get value of a leaf
     /// return zero value if leaf not exists
     pub fn get(&self, key: &H256) -> Result<V> {
@@ -352,4 +358,91 @@ impl<H: Hasher + Default, V: Value, S: StoreReadOps<V>> SparseMerkleTree<H, V, S
         assert_eq!(stack_top, 1);
         Ok(MerkleProof::new(leaves_bitmap, proof))
     }
+
+    /// Generate merkle proof for ICS 23
+    pub fn membership_proof(&self, key: &H256) -> Result<CommitmentProof> {
+        let value = self.get(key)?;
+        if value == V::zero() {
+            return Err(Error::ExistenceProof);
+        }
+        let merkle_proof = self.merkle_proof(vec![*key])?;
+        let existence_proof = proof_ics23::convert(merkle_proof, key, &value.to_h256());
+        Ok(CommitmentProof {
+            proof: Some(Proof::Exist(existence_proof)),
+        })
+    }
+
+    /*
+        pub fn non_membership_proof(&self, key: &H256) -> Result<CommitmentProof> {
+            let value = self.get(key)?;
+            if value != V::zero() {
+                return Err(Error::NonExistenceProof);
+            }
+
+            let mut left = None;
+            let mut right = None;
+            for (_, node) in cache.iter() {
+                let branch = self
+                    .store
+                    .get_branch(node)?
+                    .expect("the forked branch should exist");
+                let fork_height = key.fork_height(&branch.key);
+                let is_right = key.get_bit(fork_height);
+                if is_right && left.is_none() {
+                    // get the left which is the most right in the left subtree
+                    let mut n = node.clone();
+                    while let Some(branch) = self.store.get_branch(&n)? {
+                        if branch.fork_height == 0 {
+                            break;
+                        }
+                        let (left_node, right_node) = branch.branch(branch.fork_height);
+                        n = if right_node.is_zero() {
+                            left_node.clone()
+                        } else {
+                            right_node.clone()
+                        };
+                    }
+                    let leaf = self.store.get_leaf(&n)?.expect("the leaf should exist");
+                    let merkle_proof = self.merkle_proof(vec![leaf.key.clone()])?;
+                    left = Some(proof_ics23::convert(
+                        merkle_proof,
+                        &leaf.key,
+                        &leaf.value.to_h256(),
+                    ));
+                } else if !is_right && right.is_none() {
+                    // get the right which is the most left in the right subtree
+                    let mut n = node.clone();
+                    while let Some(branch) = self.store.get_branch(&n)? {
+                        if branch.fork_height == 0 {
+                            break;
+                        }
+                        let (left_node, right_node) = branch.branch(branch.fork_height);
+                        n = if left_node.is_zero() {
+                            right_node.clone()
+                        } else {
+                            left_node.clone()
+                        };
+                    }
+                    let leaf = self.store.get_leaf(&n)?.expect("the leaf should exist");
+                    let merkle_proof = self.merkle_proof(vec![leaf.key.clone()])?;
+                    right = Some(proof_ics23::convert(
+                        merkle_proof,
+                        &leaf.key,
+                        &leaf.value.to_h256(),
+                    ));
+                }
+                if left.is_some() && right.is_some() {
+                    break;
+                }
+            }
+            let proof = NonExistenceProof {
+                key: key.as_slice().to_vec(),
+                left,
+                right,
+            };
+            Ok(CommitmentProof {
+                proof: Some(Proof::Nonexist(proof)),
+            })
+        }
+    */
 }
