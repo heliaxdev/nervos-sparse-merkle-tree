@@ -287,28 +287,7 @@ impl<H: Hasher + Default, V: Value + core::cmp::PartialEq, S: StoreReadOps<V>>
         // sort keys
         keys.sort_unstable();
 
-        // Collect leaf bitmaps
-        let mut leaves_bitmap: Vec<H256> = Default::default();
-        for current_key in &keys {
-            let mut bitmap = H256::zero();
-            for height in 0..=core::u8::MAX {
-                let parent_key = current_key.parent_path(height);
-                let parent_branch_key = BranchKey::new(height, parent_key);
-                if let Some(parent_branch) = self.store.get_branch(&parent_branch_key)? {
-                    let sibling = if current_key.is_right(height) {
-                        parent_branch.left
-                    } else {
-                        parent_branch.right
-                    };
-                    if !sibling.is_zero() {
-                        bitmap.set_bit(height);
-                    }
-                } else {
-                    // The key is not in the tree (support non-inclusion proof)
-                }
-            }
-            leaves_bitmap.push(bitmap);
-        }
+        let leaves_bitmap = self.collect_leaves_bitmap(keys.iter().collect())?;
 
         let mut proof: Vec<MergeValue> = Default::default();
         let mut stack_fork_height = [0u8; MAX_STACK_SIZE]; // store fork height
@@ -372,77 +351,121 @@ impl<H: Hasher + Default, V: Value + core::cmp::PartialEq, S: StoreReadOps<V>>
         })
     }
 
-    /*
-        pub fn non_membership_proof(&self, key: &H256) -> Result<CommitmentProof> {
-            let value = self.get(key)?;
-            if value != V::zero() {
-                return Err(Error::NonExistenceProof);
-            }
+    pub fn non_membership_proof(&self, key: &H256) -> Result<CommitmentProof> {
+        let value = self.get(key)?;
+        if value != V::zero() {
+            return Err(Error::NonExistenceProof);
+        }
 
-            let mut left = None;
-            let mut right = None;
-            for (_, node) in cache.iter() {
-                let branch = self
-                    .store
-                    .get_branch(node)?
-                    .expect("the forked branch should exist");
-                let fork_height = key.fork_height(&branch.key);
-                let is_right = key.get_bit(fork_height);
+        let leaf_bitmaps = self.collect_leaves_bitmap(vec![key])?;
+        let leaf_bitmap = leaf_bitmaps.first().expect("The bitmap should exist");
+
+        let mut left = None;
+        let mut right = None;
+        let mut height = 0;
+        while left.is_none() || right.is_none() {
+            if leaf_bitmap.get_bit(height) {
+                let parent_key = key.parent_path(height);
+                let parent_branch_key = BranchKey::new(height, parent_key);
+                let is_right = key.is_right(height);
                 if is_right && left.is_none() {
-                    // get the left which is the most right in the left subtree
-                    let mut n = node.clone();
-                    while let Some(branch) = self.store.get_branch(&n)? {
-                        if branch.fork_height == 0 {
+                    let mut branch_key = parent_branch_key;
+                    while let Some(branch) = self.store.get_branch(&branch_key)? {
+                        let branch_height = branch_key.height;
+                        let mut node_key = branch_key.node_key;
+                        if branch_height == height || branch.right.is_zero() {
+                            node_key.clear_bit(branch_height);
+                        } else {
+                            node_key.set_bit(branch_height);
+                        }
+                        if branch_height == 0 {
+                            // set the leaf key
+                            branch_key = BranchKey::new(0, node_key);
                             break;
                         }
-                        let (left_node, right_node) = branch.branch(branch.fork_height);
-                        n = if right_node.is_zero() {
-                            left_node.clone()
-                        } else {
-                            right_node.clone()
-                        };
+                        branch_key = BranchKey::new(branch_height - 1, node_key);
                     }
-                    let leaf = self.store.get_leaf(&n)?.expect("the leaf should exist");
-                    let merkle_proof = self.merkle_proof(vec![leaf.key.clone()])?;
+                    let leaf_key = branch_key.node_key;
+                    let leaf_value = self
+                        .store
+                        .get_leaf(&leaf_key)?
+                        .expect("The leaf should exist");
+                    let merkle_proof = self.merkle_proof(vec![leaf_key])?;
                     left = Some(proof_ics23::convert(
                         merkle_proof,
-                        &leaf.key,
-                        &leaf.value.to_h256(),
+                        &leaf_key,
+                        &leaf_value.to_h256(),
                     ));
                 } else if !is_right && right.is_none() {
-                    // get the right which is the most left in the right subtree
-                    let mut n = node.clone();
-                    while let Some(branch) = self.store.get_branch(&n)? {
-                        if branch.fork_height == 0 {
+                    let mut branch_key = parent_branch_key;
+                    while let Some(branch) = self.store.get_branch(&branch_key)? {
+                        let branch_height = branch_key.height;
+                        let mut node_key = branch_key.node_key;
+                        if branch_height == height || branch.left.is_zero() {
+                            node_key.set_bit(branch_height);
+                        } else {
+                            node_key.clear_bit(branch_height);
+                        }
+                        if branch_height == 0 {
+                            // set the leaf key
+                            branch_key = BranchKey::new(0, node_key);
                             break;
                         }
-                        let (left_node, right_node) = branch.branch(branch.fork_height);
-                        n = if left_node.is_zero() {
-                            right_node.clone()
-                        } else {
-                            left_node.clone()
-                        };
+                        branch_key = BranchKey::new(branch_height - 1, node_key);
                     }
-                    let leaf = self.store.get_leaf(&n)?.expect("the leaf should exist");
-                    let merkle_proof = self.merkle_proof(vec![leaf.key.clone()])?;
+                    let leaf_key = branch_key.node_key;
+                    let leaf_value = self
+                        .store
+                        .get_leaf(&leaf_key)?
+                        .expect("The leaf should exist");
+                    let merkle_proof = self.merkle_proof(vec![leaf_key])?;
                     right = Some(proof_ics23::convert(
                         merkle_proof,
-                        &leaf.key,
-                        &leaf.value.to_h256(),
+                        &leaf_key,
+                        &leaf_value.to_h256(),
                     ));
                 }
-                if left.is_some() && right.is_some() {
-                    break;
+            }
+
+            if height == core::u8::MAX {
+                break;
+            }
+            height += 1;
+        }
+
+        let proof = NonExistenceProof {
+            key: key.as_slice().to_vec(),
+            left,
+            right,
+        };
+        Ok(CommitmentProof {
+            proof: Some(Proof::Nonexist(proof)),
+        })
+    }
+
+    fn collect_leaves_bitmap(&self, keys: Vec<&H256>) -> Result<Vec<H256>> {
+        // keys should have been already sorted
+        let mut leaves_bitmap: Vec<H256> = Default::default();
+        for current_key in keys {
+            let mut bitmap = H256::zero();
+            for height in 0..=core::u8::MAX {
+                let parent_key = current_key.parent_path(height);
+                let parent_branch_key = BranchKey::new(height, parent_key);
+                if let Some(parent_branch) = self.store.get_branch(&parent_branch_key)? {
+                    let sibling = if current_key.is_right(height) {
+                        parent_branch.left
+                    } else {
+                        parent_branch.right
+                    };
+                    if !sibling.is_zero() {
+                        bitmap.set_bit(height);
+                    }
+                } else {
+                    // The key is not in the tree (support non-inclusion proof)
                 }
             }
-            let proof = NonExistenceProof {
-                key: key.as_slice().to_vec(),
-                left,
-                right,
-            };
-            Ok(CommitmentProof {
-                proof: Some(Proof::Nonexist(proof)),
-            })
+            leaves_bitmap.push(bitmap);
         }
-    */
+        Ok(leaves_bitmap)
+    }
 }

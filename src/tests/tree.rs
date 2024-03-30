@@ -646,7 +646,6 @@ proptest! {
         }
     }
 
-    /*
     #[test]
     fn test_ics23_proof_non_exists_leaves((pairs, _n) in leaves(1, 20), (pairs2, _n2) in leaves(1, 5)) {
         let smt = new_sha_smt(pairs.clone());
@@ -656,10 +655,9 @@ proptest! {
         let non_exists_keys: Vec<_> = pairs2.into_iter().map(|(k, _v)|k).filter(|k| !exists_key.contains(&k)).collect();
         for k in non_exists_keys {
             let proof = smt.non_membership_proof(&k).expect("gen proof");
-            assert!(ics23::verify_non_membership(&proof, &spec, &root, &k.as_slice()));
+            assert!(ics23::verify_non_membership::<ics23::HostFunctionsManager>(&proof, &spec, &root, &k.as_slice()));
         }
     }
-    */
 }
 
 fn parse_h256(s: &str) -> H256 {
